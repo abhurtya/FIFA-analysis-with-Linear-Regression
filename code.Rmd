@@ -1,0 +1,438 @@
+---
+author: "Anish Bhurtyal, Avanish Chaulagai, Nikita Gerzhgorin, Joseph Donohoe"
+date: "2022-11-21"
+output:
+  pdf_document: default
+  html_document: default
+  always_allow_html: yes
+---
+
+
+# FIFA 22 PLAYERS ANALYSIS
+
+
+
+```{r packages, echo = FALSE, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(tidymodels)
+library(gghighlight)
+library(knitr)
+library(dplyr)
+library(cluster) # clustering algorithms
+library(factoextra) # clustering algorithms & visualization
+
+set.seed(1234)
+```
+
+#### Data and exploration
+
+
+### Data
+
+```{r}
+fifa <- read.csv("players_22.csv")
+#head(fifa, 3)
+```
+
+
+### Missing values
+
+```{r message=FALSE, warning=FALSE}
+missing.values <- fifa %>%
+    gather(key = "key", value = "val") %>%
+    mutate(is.missing = is.na(val)) %>%
+    group_by(key, is.missing) %>%
+    summarise(num.missing = n()) %>%
+    filter(is.missing == T) %>%
+    select(-is.missing) %>%
+    arrange(desc(num.missing))
+
+missing.values %>%
+    ggplot() +
+    geom_bar(aes(x = key, y = num.missing), stat = "identity") +
+    labs(x = "variable", y = "number of missing values", title = "Number of missing values") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+### Duplicates
+
+```{r}
+sprintf("Number of duplicates columns:")
+sum(duplicated(fifa$long_name) == TRUE)
+sprintf("Dimension  before")
+dim(fifa)
+
+fifa <- fifa %>% distinct(long_name, .keep_all = TRUE)
+sprintf("Dimension  after")
+dim(fifa)
+```
+
+### Data Cleaning
+
+```{r datacleaning}
+fifa <- fifa %>%
+    mutate(wage_eur = ifelse(is.na(wage_eur),
+        median(wage_eur, na.rm = T),
+        wage_eur
+    )) %>%
+    mutate(value_eur = ifelse(is.na(value_eur),
+        median(value_eur, na.rm = T),
+        value_eur
+    )) %>%
+    mutate(passing = ifelse(is.na(passing),
+        median(passing, na.rm = T),
+        passing
+    )) %>%
+    mutate(dribbling = ifelse(is.na(dribbling),
+        median(dribbling, na.rm = T),
+        dribbling
+    )) %>%
+    mutate(pace = ifelse(is.na(pace),
+        median(pace, na.rm = T),
+        pace
+    )) %>%
+    mutate(defending = ifelse(is.na(defending),
+        median(defending, na.rm = T),
+        defending
+    )) %>%
+    mutate(shooting = ifelse(is.na(shooting),
+        median(shooting, na.rm = T),
+        shooting
+    )) %>%
+    mutate(physic = ifelse(is.na(physic),
+        median(physic, na.rm = T),
+        physic
+    ))
+```
+
+### Visaulizing Amounts
+
+
+```{r}
+league1 <- table(fifa$league_name)
+league2=as.data.frame(league1)
+league3 <- league2 %>% 
+  mutate(Freq = as.numeric(Freq)) %>% 
+  arrange(desc(Freq)) %>%
+  slice(1:5)
+par(las=2)
+par(mar=c(5,10,4,2))
+
+barplot(league3$Freq,names.arg=c("USA Major League Soccer", "Argentina Primera División",
+                                 "English League Championship", "English Premier League", "Spain Primera Division"), cex.names=0.8,xlab="Number of Players",col="blue",
+main="Top 5 Leagues with Highest Number of Players",border="red", horiz=TRUE)
+```
+
+### Where are the players from?
+
+```{r}
+fifa_country_count <- fifa %>%
+    group_by(nationality_name) %>%
+    summarize(Freq = n())
+
+fifa_country_count$nationality_name[fifa_country_count$nationality_name 
+                                    == "United States"] <- "United States of America"
+fifa_country_count
+```
+
+```{r message=FALSE, warning=FALSE, fig.width=9, fig.height= 7} 
+library(plotly)
+country_with_code <- read.csv("https://raw.githubusercontent.com/lukes/ISO-3166-Countries-with-Regional-Codes/master/slim-3/slim-3.csv")
+head(country_with_code)
+
+fifa_country_count_with_code <- fifa_country_count %>%
+    left_join(country_with_code,
+        by = c("nationality_name" = "name")
+    )
+
+fig <- plot_ly(fifa_country_count_with_code,
+    type = "choropleth",
+    locations = fifa_country_count_with_code$alpha.3,
+    z = fifa_country_count_with_code$Freq,
+    text = fifa_country_count_with_code$nationality_name,
+    colorscale = "ice"
+)
+
+fig <- fig %>% colorbar(title = "No of players")
+fig <- fig %>% layout(
+    title = "Choropleth showing FIFA 2022 Players' Nationality <br>(Hover for breakdown)"
+)
+
+fig
+```
+
+
+
+
+
+#### Visaulizing Proportions
+
+```{r}
+nation1 <- table(fifa$nationality_name)
+nation2=as.data.frame(nation1)
+nation3 <- nation2 %>% 
+  mutate(Freq = as.numeric(Freq)) %>% 
+  arrange(desc(Freq)) %>%
+  slice(1:5)
+pct <- round(nation3$Freq/sum(nation3$Freq)*100)
+nation3$Var1 <- paste(pct,"%",sep="") 
+colors <- c("grey", "blue","green", "yellow", "red")
+pie(nation3$Freq,labels = nation3$Var1, col = colors,
+    main="Top 5 Countries with Highest Number of Players", cex=0.8)
+legend(1.2, .5, c("England", "Germany", "Spain", "France", "Argentina"), fill = colors) 
+```
+
+
+
+
+
+### Age Distribution
+
+
+```{r warning=FALSE, fig.asp = 0.25, fig.width= 7}
+ggplot(fifa, aes(x = age)) +
+    geom_boxplot() +
+    labs(
+        title = "The Distribution of Age",
+        x = "Age"
+    )
+```
+
+
+### Oldest Players
+
+
+```{r}
+old <- fifa %>%
+    arrange(desc(age)) %>%
+    select(short_name, nationality_name, age)
+head(old)
+```
+
+
+### Youngest Players
+
+
+```{r}
+young <- fifa %>%
+    arrange(age) %>%
+    select(short_name, nationality_name, age)
+head(young)
+```
+
+### Some line charts with age
+
+### Players Attributes vs. Age
+
+```{r message=FALSE, warning=FALSE}
+filtered_attributes <- fifa %>%
+    group_by(age) %>%
+    summarise_at(
+        vars(overall, potential, pace),
+        list(mean)
+    )
+filtered_attributes
+
+library("reshape2")
+data_long <- melt(filtered_attributes, id = "age")
+
+ggplot(
+    data_long,
+    aes(
+        x = age,
+        y = value,
+        color = variable
+    )
+) +
+    geom_line() +
+    labs(
+        y = "Player Atrributes Rating",
+        x = "Age",
+        color = "Color Legend",
+        title = "Attributes vs Age",
+    )
+```
+
+
+### Players Value vs. Age
+
+```{r}
+
+money_attributes <- fifa %>%
+    group_by(age) %>%
+    summarise_at(
+        vars(value_eur),
+        list(mean)
+    )
+
+ggplot(money_attributes, aes(x = age, y = value_eur)) +
+    geom_line() +
+    labs(
+        y = "Player Value in Millions",
+        x = "Age",
+        title = "Player value vs Age",
+    ) +
+    scale_y_continuous(labels = label_number(suffix = " M", scale = 1e-6)) # thousands
+```
+
+
+
+#### Modeling
+
+```{r}
+hist(fifa$overall, xlab="overall Rating", main = "Histogram of Overall Rating")
+fifa$overall = log10(fifa$overall)
+
+
+hist(fifa$overall, xlab = "Log10 of Overall Rating", main = "Histogram of Overall Rating- Log10")
+
+hist(fifa$wage_eur, xlab = "Wage in Euros", main = "Histogram of Wage")
+fifa$wage_eur = log10(fifa$wage_eur)
+
+#fifa$wage_eur = log(fifa$overall)
+hist(fifa$overall, xlab="Wage in Euros", main="Histogram of Wage- Log10")
+
+```
+
+### Train / test
+
+- Create an initial split
+
+```{r}
+dt <- sort(sample(nrow(fifa), nrow(fifa) * .7))
+train <- fifa[dt, ]
+test <- fifa[-dt, ]
+
+train <- train %>% filter(!is.na(overall))
+test <- test %>% filter(!is.na(overall))
+
+```
+
+
+```{r}
+
+
+overall_individualskills <- lm(overall ~ pace + shooting + passing + dribbling + defending +
+                                 physic + age + preferred_foot + attacking_crossing + attacking_finishing + attacking_heading_accuracy + 
+                                 attacking_short_passing + attacking_volleys + skill_dribbling +skill_curve +skill_fk_accuracy +
+                                 skill_long_passing +skill_ball_control +movement_acceleration +movement_sprint_speed +
+                                 movement_agility +movement_reactions +movement_balance +power_shot_power +power_jumping+ power_stamina +
+                                 power_strength +power_long_shots +mentality_aggression +mentality_interceptions +mentality_positioning +
+                                 mentality_vision +mentality_penalties +mentality_composure +defending_marking_awareness +defending_standing_tackle +
+                                 defending_sliding_tackle, data = train)
+
+summary(overall_individualskills)
+
+
+
+wage_individualskills <- lm(wage_eur ~ pace + shooting + passing + dribbling + defending +
+                              physic + age + preferred_foot + attacking_crossing + attacking_finishing + attacking_heading_accuracy +
+                              attacking_short_passing + attacking_volleys + skill_dribbling +skill_curve +skill_fk_accuracy +
+                              skill_long_passing +skill_ball_control +movement_acceleration +movement_sprint_speed +movement_agility +
+                              movement_reactions +movement_balance +power_shot_power +power_jumping+ power_stamina +
+                              power_strength +power_long_shots +mentality_aggression +mentality_interceptions +mentality_positioning +
+                              mentality_vision +mentality_penalties +mentality_composure +defending_marking_awareness +defending_standing_tackle +
+                              defending_sliding_tackle, data = train)
+
+summary(wage_individualskills)
+
+```
+
+
+
+```{r}
+
+overalldata <- data.frame(actual= test$overall, predicted = predict(overall_individualskills, test))
+wagedata <- data.frame(actual= test$wage_eur, predicted = predict(wage_individualskills, test))
+#colSums(is.na(data2))
+```
+
+```{r}
+m2wage <- mean((wagedata$actual- wagedata$predicted)^2)
+m2wage
+m2overall <-  mean((overalldata$actual - overalldata$predicted)^2)
+m2overall
+```
+```{r  out.width = "70%"}
+ggplot(wagedata, aes(x = predicted, y = actual)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1) +
+  labs(x='Transformed Predicted Wage Values', y='Transformed Actual Wage Values',
+       title='Transformed Predicted vs. Transformed Actual Wage Values')
+
+ggplot(overalldata, aes(x = predicted, y = actual)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1) +
+  labs(x='Transformed Predicted Overall Values', y='Transformed Actual Overall Values',
+       title='Transformed Predicted vs. Transformed Actual Overall Values')
+
+```
+
+
+
+### Ghana players cluster
+
+
+```{r fig.width=9, fig.height= 7}
+# filter out players from team Ghana who arenot reserves or substitutes
+ghana <- fifa %>%
+    filter(fifa$nationality_name == "Ghana" & fifa$club_position != "RES" &
+             fifa$club_position != "SUB") %>%
+    select(short_name, shooting, pace, passing, dribbling, defending)
+
+# drop duplicates if any
+ghana <- ghana %>% distinct(short_name, .keep_all = TRUE)
+
+# make player name as rownames
+rownames(ghana) <- ghana$short_name
+ghana2 <- ghana %>% select(2:5)
+
+# perform k means clustering with 10 centers
+k2 <- kmeans(ghana2, centers = 10, nstart = 25)
+# str(k2)
+
+fviz_cluster(k2, data = ghana2)
+```
+
+
+### Current Portugal Team Cluster
+
+
+```{r  fig.width=9, fig.height= 7 }
+portugal_current <- c(
+    "André Silva", "Antonio Silva", "Bernardo Silva", "Bruno Fernandes",
+    "Cristiano Ronaldo", "Danilo Pereira", "Diogo Costa", "Diogo Dalot",
+    "Gonçalo Ramos", "João Cancelo", "João Félix", "João Mário", "Palhinha",
+    "José Sá", "Matheus Nunes", "Nuno Mendes", "Otavio", "Pepe", "Rafael Leão",
+    "Raphael Guzzo", "Ricardo Horta", "Rúben Dias", "Ruben Neves", "Rui Patrício",
+    "Vitinha", "William Carvalho"
+)
+
+portugal <- fifa %>%
+    filter(fifa$nationality_name == "Portugal") %>%
+    select(short_name, shooting, pace, passing, dribbling, defending)
+
+# filter out the players in current national team
+portugal <- portugal[portugal$short_name %in% portugal_current, ]
+
+# drop duplicates if any
+portugal <- portugal %>% distinct(short_name, .keep_all = TRUE)
+
+# make player name as rownames
+rownames(portugal) <- portugal$short_name
+portugal2 <- portugal %>% select(2:5)
+
+# perform k means clustering with 5 centers
+k2 <- kmeans(portugal2, centers = 5, nstart = 25)
+# str(k2)
+fviz_cluster(k2, data = portugal2)
+```
+
+```{r warning=FALSE, fig.width=9, fig.height= 7 }
+res <- hcut(portugal2, k = 4, stand = TRUE)
+# Visualize
+fviz_dend(res, rect = TRUE, cex = 0.5,
+          k_colors = c("#00AFBB","#2E9FDF", "#E7B800", "#FC4E07"))
+```
+
